@@ -1,0 +1,12 @@
+services:
+  phonepe-analyser:
+    image: ghcr.io/snehithgit/phonepe-analyser:latest
+    container_name: phonepe-analyser
+    restart: unless-stopped
+    environment:
+      PHONEPE_DB_PATH: /data/phonepe.db
+      PHONEPE_FRONTEND_DIST: /app/frontend/dist
+    volumes:
+      - ./data:/data
+    ports:
+      - "8088:8000"

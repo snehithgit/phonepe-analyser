@@ -1,0 +1,8 @@
+Transaction Statement for 9000000000
+Duration,"01 Sep, 2026 - 30 Sep, 2026"
+
+Date,Time,Transaction Details,Transaction ID,UTR,Transaction Type,Credit/debit instrument,Amount
+"Sep 25, 2026","06:33 PM","Paid to SAMPLE RESTAURANT","T2609250000000000000001","000000000123","DEBIT","Paid by XXXXXXXXXX1234","380"
+"Sep 24, 2026","10:52 AM","Received from SAMPLE PERSON","T2609240000000000000002","000000000124","CREDIT","Credited to XXXXXXXXXX1234","1500.50"
+"Sep 23, 2026","08:00 AM","Mobile recharged 9000000000","T2609230000000000000003","000000000125","DEBIT","Paid by XXXXXXXXXX1234","299"
+This is a footer disclaimer row,,,,,,,
