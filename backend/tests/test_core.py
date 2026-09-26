@@ -73,9 +73,6 @@ class CoreRegressionTests(unittest.TestCase):
             self.assertEqual(detect_patterns(db), [])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 class PatternClusteringTests(unittest.TestCase):
     def test_distinct_amount_streams_do_not_merge(self):
         from datetime import datetime
@@ -94,3 +91,6 @@ class PatternClusteringTests(unittest.TestCase):
             rows=detect_patterns(db)
             self.assertEqual(len(rows),2)
             self.assertEqual(sorted(r['median_amount_paise'] for r in rows),[210000,530000])
+
+if __name__ == "__main__":
+    unittest.main()
