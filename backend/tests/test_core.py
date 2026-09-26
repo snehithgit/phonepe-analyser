@@ -60,6 +60,34 @@ class CoreRegressionTests(unittest.TestCase):
         self.assertEqual(second.json()["restored_transactions"], 0)
         self.assertEqual(second.json()["duplicates"], 3)
 
+
+
+    def test_same_transaction_id_can_have_debit_and_credit_legs(self):
+        raw = b'''Transaction Statement for 9000000000
+Duration,01 Jan 2021 - 02 Jan 2021
+
+Date,Time,Transaction Details,Transaction ID,UTR,Transaction Type,Credit/debit instrument,Amount
+2021-01-01,10:00,Paid to TEST MERCHANT,TSHARED,111111111111,Debit,XXXX1234,100.00
+2021-01-01,10:01,Received from PhonePe,TSHARED,,Credit,Wallet,1.50
+'''
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as handle:
+            handle.write(raw)
+            temp_path = Path(handle.name)
+
+        try:
+            response = self._upload("/api/imports/commit", temp_path)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["new_transactions"], 2)
+
+            second = self._upload("/api/imports/commit", temp_path)
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(second.json()["duplicates"], 2)
+        finally:
+            temp_path.unlink(missing_ok=True)
+
     def test_self_transfer_excluded_from_patterns(self):
         self._upload("/api/imports/commit")
         with SessionLocal() as db:
