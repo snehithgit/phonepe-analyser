@@ -2,6 +2,7 @@ import {useEffect,useState} from 'react'
 import {ArrowDownLeft,ArrowUpRight,Link2,Save,Tags,UserRound} from 'lucide-react'
 import {api,inr} from './api'
 import {useLoad} from './hooks'
+import CategorySelect from './CategorySelect'
 
 export default function CounterpartyLedger({name}:{name:string}){
   const endpoint=`/api/counterparties/${encodeURIComponent(name)}/ledger`
@@ -148,7 +149,7 @@ export default function CounterpartyLedger({name}:{name:string}){
     <section className="panel table-panel">
       <div className="panel-pad"><div className="panel-title"><div><h2>Ledger transactions</h2><p>{data.transaction_count||0} matching transactions</p></div></div></div>
       <table><thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Type</th><th className="num">Amount</th></tr></thead>
-      <tbody>{data.transactions.map((x:any)=><tr key={x.id}><td>{new Date(x.datetime).toLocaleDateString('en-IN')}</td><td><b>{x.counterparty||x.description}</b><small>{x.transaction_id}</small></td><td><select className="table-select" value={x.category_id||''} onChange={e=>setCategory(x.id,e.target.value?Number(e.target.value):null)}><option value="">Uncategorized</option>{categories.data.map((c:any)=><option key={c.id} value={c.id}>{c.name}</option>)}</select></td><td><span className={`badge ${x.direction==='CREDIT'?'green':'red'}`}>{x.direction}</span></td><td className={`num ${x.direction==='CREDIT'?'credit':'debit'}`}>{x.direction==='CREDIT'?'+':'-'}{inr(x.amount)}</td></tr>)}</tbody></table>
+      <tbody>{data.transactions.map((x:any)=><tr key={x.id}><td>{new Date(x.datetime).toLocaleDateString('en-IN')}</td><td><b>{x.counterparty||x.description}</b><small>{x.transaction_id}</small></td><td><CategorySelect value={x.category_id} categories={categories.data} onChange={id=>setCategory(x.id,id)}/></td><td><span className={`badge ${x.direction==='CREDIT'?'green':'red'}`}>{x.direction}</span></td><td className={`num ${x.direction==='CREDIT'?'credit':'debit'}`}>{x.direction==='CREDIT'?'+':'-'}{inr(x.amount)}</td></tr>)}</tbody></table>
       <div className="mobile-tx-list">{data.transactions.map((x:any)=><div className="mobile-tx ledger-mobile" key={x.id}><div className={`tx-icon ${x.direction.toLowerCase()}`}>{x.direction==='CREDIT'?<ArrowDownLeft/>:<ArrowUpRight/>}</div><div className="tx-main"><b>{x.counterparty||x.description}</b><span>{new Date(x.datetime).toLocaleDateString('en-IN')} · {x.category}</span></div><strong className={x.direction==='CREDIT'?'credit':'debit'}>{x.direction==='CREDIT'?'+':'-'}{inr(x.amount)}</strong></div>)}</div>
     </section>
   </>
