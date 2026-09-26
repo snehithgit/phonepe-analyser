@@ -15,6 +15,26 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(result.transactions[1].amount_paise, 150050)
         self.assertEqual(result.statement_start, "2026-09-01")
 
+
+    def test_older_iso_date_24h_phonepe_export(self):
+        raw = b'''Transaction Statement for +919000000000
+Duration,09 Jun 2017 - 26 Sep 2026
+
+Date,Time,Transaction Details,Transaction ID,UTR,Transaction Type,Credit/debit instrument,Amount
+2020-12-24,\t15:32,Paid to IRCTC,C2012241531452369112119,035961612176,Debit,********0654,161.80
+2020-12-25,\t21:04,Paid to Airtel HDFC UPI Master login,T2012252104181794279447,,Debit,********0654,558.00
+This is an automatically generated statement.
+'''
+        result = parse_phonepe_csv(raw, "old-export.csv")
+        self.assertEqual(result.statement_start, "2017-06-09")
+        self.assertEqual(result.statement_end, "2026-09-26")
+        self.assertEqual(len(result.transactions), 2)
+        self.assertEqual(result.skipped_rows, 1)
+        self.assertEqual(result.transactions[0].date, "2020-12-24")
+        self.assertEqual(result.transactions[0].time, "15:32")
+        self.assertEqual(result.transactions[0].amount_paise, 16180)
+        self.assertTrue(result.transactions[1].missing_utr)
+
     def test_money_exact(self):
         self.assertEqual(rupees_to_paise("1,037.95"), 103795)
         self.assertEqual(rupees_to_paise("0.01"), 1)
