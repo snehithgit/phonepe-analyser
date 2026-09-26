@@ -107,19 +107,52 @@ def _find_header(lines: list[str]) -> int:
     raise ValueError("PhonePe transaction header not found")
 
 
+DURATION_DATE_FORMATS = (
+    "%d %b, %Y",  # newer export: 01 Apr, 2026
+    "%d %b %Y",   # older export: 09 Jun 2017
+    "%Y-%m-%d",
+)
+
+TRANSACTION_DATETIME_FORMATS = (
+    "%b %d, %Y %I:%M %p",  # newer export: Apr 01, 2026 03:32 PM
+    "%Y-%m-%d %H:%M",       # older export: 2020-12-24 15:32
+    "%Y-%m-%d %I:%M %p",
+)
+
+
+def _parse_date_value(value: str) -> str | None:
+    value = value.strip()
+    for fmt in DURATION_DATE_FORMATS:
+        try:
+            return datetime.strptime(value, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
 def _parse_duration(lines: list[str], header_index: int) -> tuple[str | None, str | None]:
     for line in lines[:header_index]:
         if line.lower().startswith("duration"):
             row = next(csv.reader([line]))
             if len(row) > 1 and " - " in row[1]:
                 left, right = row[1].split(" - ", 1)
-                try:
-                    start = datetime.strptime(left.strip(), "%d %b, %Y").date().isoformat()
-                    end = datetime.strptime(right.strip(), "%d %b, %Y").date().isoformat()
+                start = _parse_date_value(left)
+                end = _parse_date_value(right)
+                if start and end:
                     return start, end
-                except ValueError:
-                    pass
     return None, None
+
+
+def _parse_transaction_datetime(date_value: str, time_value: str) -> datetime:
+    combined = f"{date_value.strip()} {time_value.strip()}"
+    for fmt in TRANSACTION_DATETIME_FORMATS:
+        try:
+            return datetime.strptime(combined, fmt)
+        except ValueError:
+            continue
+    raise ValueError(
+        f"unsupported PhonePe date/time format: date={date_value!r}, time={time_value!r}"
+    )
 
 
 def _looks_like_empty_or_footer(row: dict[str, str | None]) -> bool:
@@ -166,9 +199,9 @@ def parse_phonepe_csv(data: bytes, filename: str) -> ParsedStatement:
             continue
 
         try:
-            dt = datetime.strptime(
-                f"{(row.get('Date') or '').strip()} {(row.get('Time') or '').strip()}",
-                "%b %d, %Y %I:%M %p",
+            dt = _parse_transaction_datetime(
+                row.get("Date") or "",
+                row.get("Time") or "",
             )
             amount_paise = rupees_to_paise(row.get("Amount") or "")
         except (ValueError, TypeError) as exc:
