@@ -220,6 +220,10 @@ class AliasCreate(BaseModel):
     alias: str
 
 
+class MergeProfileRequest(BaseModel):
+    alias: str
+
+
 class CategorizeProfile(BaseModel):
     category_name: str = "Personal Lending / Interest"
 
@@ -297,6 +301,69 @@ def add_counterparty_alias(
     db.add(CounterpartyAlias(profile_id=profile_id, normalized_name=alias))
     db.commit()
     return {"ok": True, "alias": alias}
+
+
+@router.post("/counterparty-profiles/{profile_id}/merge")
+def merge_counterparty_profile(
+    profile_id: int,
+    body: MergeProfileRequest,
+    db: Session = Depends(get_db),
+):
+    target = db.scalar(
+        select(CounterpartyProfile)
+        .options(selectinload(CounterpartyProfile.aliases))
+        .where(CounterpartyProfile.id == profile_id)
+    )
+    if not target:
+        raise HTTPException(404, "Target counterparty profile not found")
+
+    alias = _normalize_name(body.alias)
+    if not alias:
+        raise HTTPException(400, "Profile name / alias is required")
+
+    source = _profile_for_name(db, alias)
+    if not source:
+        raise HTTPException(404, "No existing profile owns that name / alias")
+    if source.id == target.id:
+        return {"ok": True, "merged": False, "profile": _profile_json(target)}
+
+    # Preserve the target profile identity. Move every alias and linked loan
+    # from the duplicate source profile into it.
+    source_aliases = list(
+        db.scalars(
+            select(CounterpartyAlias).where(
+                CounterpartyAlias.profile_id == source.id
+            )
+        ).all()
+    )
+    for source_alias in source_aliases:
+        source_alias.profile_id = target.id
+
+    source_loans = list(
+        db.scalars(select(Loan).where(Loan.profile_id == source.id)).all()
+    )
+    for loan in source_loans:
+        loan.profile_id = target.id
+
+    if target.relationship_type == "GENERAL" and source.relationship_type != "GENERAL":
+        target.relationship_type = source.relationship_type
+    if not target.notes and source.notes:
+        target.notes = source.notes
+
+    db.delete(source)
+    db.flush()
+
+    merged = db.scalar(
+        select(CounterpartyProfile)
+        .options(selectinload(CounterpartyProfile.aliases))
+        .where(CounterpartyProfile.id == target.id)
+    )
+    db.commit()
+    return {
+        "ok": True,
+        "merged": True,
+        "profile": _profile_json(merged),
+    }
 
 
 @router.delete("/counterparty-profiles/{profile_id}/aliases/{alias_id}")

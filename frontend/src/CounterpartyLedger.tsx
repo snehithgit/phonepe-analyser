@@ -45,6 +45,23 @@ export default function CounterpartyLedger({name}:{name:string}){
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alias})
       })
       setAlias('');setStatus('Alias added.');reload()
+    }catch(e:any){
+      if(String(e.message||'').includes('belongs to another profile')){
+        setStatus('That name already belongs to another profile. Use “Merge profile” to combine both ledgers.')
+      }else setStatus(e.message)
+    }
+  }
+
+  async function mergeProfile(){
+    if(!alias.trim()||!data.profile?.id)return
+    if(!confirm(`Merge the existing profile for “${alias}” into “${data.display_name||name}”? All aliases, transactions and linked loans will appear under one ledger.`))return
+    try{
+      const r:any=await api(`/api/counterparty-profiles/${data.profile.id}/merge`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alias})
+      })
+      setAlias('')
+      setStatus(r.merged?'Profiles merged. Debit and credit history are now combined.':'That name is already part of this profile.')
+      reload()
     }catch(e:any){setStatus(e.message)}
   }
 
@@ -119,7 +136,8 @@ export default function CounterpartyLedger({name}:{name:string}){
         <div className="actions left"><button className="primary" onClick={saveProfile}><Save size={16}/>Save profile</button></div>
         {data.profile?.id&&<>
           <div className="alias-list"><b>Aliases</b>{data.aliases.map((a:string)=><span key={a}>{a}</span>)}</div>
-          <div className="inline-form"><input value={alias} onChange={e=>setAlias(e.target.value)} placeholder="Add another spelling/name"/><button onClick={addAlias}><Link2 size={15}/>Add alias</button></div>
+          <div className="inline-form"><input value={alias} onChange={e=>setAlias(e.target.value)} placeholder="Add alias or existing profile name"/><button onClick={addAlias}><Link2 size={15}/>Add alias</button><button className="merge-btn" onClick={mergeProfile}>Merge profile</button></div>
+          <div className="merge-help">If debit and credit are split across two existing profiles, enter the other profile name above and choose <b>Merge profile</b>.</div>
           <button className="ghost lending-action" onClick={categorizeAll}><Tags size={15}/>Classify all matching transactions as Personal Lending / Interest</button>
         </>}
         {status&&<div className="status-line">{status}</div>}

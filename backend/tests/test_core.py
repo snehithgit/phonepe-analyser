@@ -186,6 +186,55 @@ Date,Time,Transaction Details,Transaction ID,UTR,Transaction Type,Credit/debit i
         self.assertEqual(body["total_received"], 5000.0)
         self.assertEqual(body["balance_due_to_you"], 35000.0)
 
+    def test_merge_duplicate_counterparty_profiles_combines_ledger(self):
+        raw = b'''Transaction Statement for 9000000000
+Duration,01 Jul 2026 - 31 Aug 2026
+
+Date,Time,Transaction Details,Transaction ID,UTR,Transaction Type,Credit/debit instrument,Amount
+"Jul 01, 2026","10:00 AM","Paid to PILLA LAXMANA RAO","TM1","111","DEBIT","XXXX1234","40000"
+"Aug 01, 2026","10:00 AM","Received from pilla lakshman rao","TM2","222","CREDIT","XXXX1234","5000"
+'''
+        self.assertEqual(self._import_csv(raw).status_code, 200)
+
+        debit_profile = self.client.post(
+            "/api/counterparty-profiles",
+            json={
+                "display_name": "Pilla Laxmana Rao",
+                "primary_alias": "PILLA LAXMANA RAO",
+                "relationship_type": "PERSONAL_LENDING",
+            },
+        ).json()
+        credit_profile = self.client.post(
+            "/api/counterparty-profiles",
+            json={
+                "display_name": "Pilla Lakshman Rao",
+                "primary_alias": "PILLA LAKSHMAN RAO",
+                "relationship_type": "PERSONAL_LENDING",
+            },
+        ).json()
+
+        merged = self.client.post(
+            f"/api/counterparty-profiles/{debit_profile['id']}/merge",
+            json={"alias": "PILLA LAKSHMAN RAO"},
+        )
+        self.assertEqual(merged.status_code, 200)
+        self.assertTrue(merged.json()["merged"])
+
+        ledger = self.client.get(
+            "/api/counterparties/PILLA%20LAXMANA%20RAO/ledger"
+        ).json()
+        self.assertEqual(ledger["transaction_count"], 2)
+        self.assertEqual(ledger["total_paid"], 40000.0)
+        self.assertEqual(ledger["total_received"], 5000.0)
+        self.assertEqual(ledger["balance_due_to_you"], 35000.0)
+        self.assertEqual(
+            sorted(ledger["aliases"]),
+            ["PILLA LAKSHMAN RAO", "PILLA LAXMANA RAO"],
+        )
+
+        with SessionLocal() as db:
+            self.assertIsNone(db.get(CounterpartyProfile, credit_profile["id"]))
+
     def test_loan_auto_link_and_interest_allocation(self):
         raw = b'''Transaction Statement for 9000000000
 Duration,01 Jul 2026 - 31 Aug 2026
