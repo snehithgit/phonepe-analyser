@@ -364,10 +364,22 @@ class SeedRuleSpecificityTests(unittest.TestCase):
     keyword (e.g. "SWIGGY") never shadows a more specific one that contains it
     (e.g. "SWIGGY INSTAMART") regardless of dict insertion order."""
 
+    @staticmethod
+    def _keyword_rules(rules):
+        # Only the CONTAINS-on-counterparty_normalized rules that seed.py
+        # derives from CATEGORY_RULES and manages via _upsert_category_rule.
+        # Excludes the separate operation-based rules (REFUND/RECHARGE/ROAMING),
+        # which legitimately reuse some of the same literal pattern strings
+        # (e.g. "RECHARGE") under a different match_field/match_type.
+        return [
+            r for r in rules
+            if r.builtin and r.match_field == "counterparty_normalized" and r.match_type == "CONTAINS"
+        ]
+
     def test_more_specific_pattern_outranks_shorter_substring(self):
         with SessionLocal() as db:
-            rules = load_category_rules(db)
-            by_pattern = {r.pattern: r for r in rules if r.builtin}
+            rules = self._keyword_rules(load_category_rules(db))
+            by_pattern = {r.pattern: r for r in rules}
             specific = [p for p in by_pattern if "SWIGGY" in p.upper() and p.upper() != "SWIGGY"]
             self.assertTrue(specific, "expected a longer SWIGGY-containing builtin pattern")
             for pattern in specific:
@@ -386,10 +398,15 @@ class SeedRuleSpecificityTests(unittest.TestCase):
             before = {r.id: (r.pattern, r.priority) for r in load_category_rules(db) if r.builtin}
             seed_defaults(db)
             db.commit()
-            after = {r.id: (r.pattern, r.priority) for r in load_category_rules(db) if r.builtin}
+            all_after = load_category_rules(db)
+            after = {r.id: (r.pattern, r.priority) for r in all_after if r.builtin}
             self.assertEqual(before, after)
-            patterns = [p for p, _ in after.values()]
-            self.assertEqual(len(patterns), len(set(patterns)), "seeding must not duplicate builtin rules")
+            # Uniqueness is keyed on (match_field, match_type, pattern) - the same
+            # tuple _upsert_category_rule/_rule_exists key on - not pattern alone,
+            # since distinct rule kinds (a CONTAINS keyword rule vs. an EXACT
+            # operation rule) can legitimately share a literal pattern string.
+            keys = [(r.match_field, r.match_type, r.pattern) for r in self._keyword_rules(all_after)]
+            self.assertEqual(len(keys), len(set(keys)), "seeding must not duplicate builtin keyword rules")
 
 
 if __name__ == "__main__":
