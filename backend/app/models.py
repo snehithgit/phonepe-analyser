@@ -59,7 +59,14 @@ class Rule(Base):
 class Transaction(Base):
     __tablename__ = "transactions"
     __table_args__ = (
-        UniqueConstraint("provider", "transaction_id", name="uq_provider_transaction_id"),
+        UniqueConstraint(
+            "provider",
+            "transaction_id",
+            "direction",
+            "amount_paise",
+            "utr",
+            name="uq_provider_transaction_entry",
+        ),
         Index("ix_transactions_datetime", "txn_datetime"),
         Index("ix_transactions_counterparty", "counterparty_normalized"),
         Index("ix_transactions_category", "category_id"),
