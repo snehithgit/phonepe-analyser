@@ -1,85 +1,50 @@
-# Project Status — PhonePe Analyser v0.1.0
+# PhonePe Analyser — Project Status v0.1.2
 
-## Implemented now
+## Current architecture
 
-### P0 data correctness
-- CSV-only source contract; no PDF/OCR code
-- Dynamic PhonePe transaction-header detection
-- Metadata duration parsing
-- Footer/non-transaction row rejection
-- `Decimal` money parsing to integer paise
-- Transaction ID and UTR stored as TEXT
-- SHA-256 import fingerprint metadata
-- Transaction-ID dedup across overlapping exports
-- Import preview
-- Reversible (soft/tombstone) import rollback
-- SQLite WAL mode
-- First-class account/payment instrument table
-- Categories and rules tables
+Single-container, local-first deployment:
 
-### P1 usable analyser
-- Dashboard totals
-- Daily-spend mini chart
-- Category totals
-- Top counterparties
-- Searchable transaction ledger
-- Direction filter
-- Import history
-- Responsive mobile transaction cards
-- Mobile bottom navigation
+- FastAPI API + React static frontend in one image
+- SQLite database persisted at `/data/phonepe.db`
+- PhonePe CSV is the only source format in scope
+- No AI, no cloud APIs, no telemetry
 
-### P2 deterministic rules foundation
-- Description parsing: Paid to / Received from / Payment to / Transfer to / Refund from / Mobile recharged / International Roaming Pack
-- Direction conflict warning
-- Category rules: EXACT / CONTAINS / STARTS_WITH / ENDS_WITH / REGEX engine support in backend
-- Seed rules for obvious food/grocery/medical/entertainment/utility/recharge/etc. merchants
-- Rule listing page
-- Manual transaction patch API prepared for category/notes/self-transfer overrides
+## Verified fixes in v0.1.2
 
-### P3 pattern foundation
-- Patterns run separately for DEBIT and CREDIT
-- recurring fixed
-- recurring variable
-- frequent counterparty
-- probable (2 occurrence) vs confirmed (3+)
-- median interval
-- interval MAD
-- median amount
-- amount MAD / stability
-- expected next date
+- Rollback is genuinely reversible: rolled-back transaction IDs are restored, not re-inserted against the unique constraint.
+- Preview reports active duplicates separately from restorable tombstones.
+- Category rules are loaded once per import instead of once per transaction.
+- Payment instruments are cached/preloaded during import.
+- Catch-all CREDIT → Receipts categorization removed; unmatched credits remain Uncategorized.
+- Valid rows without a UTR are retained and flagged as a data-quality warning.
+- Self-transfers are excluded from pattern detection and all effective-spend analytics.
+- Exact refund/debit pairs are excluded consistently from spend/category/daily analytics; unmatched refunds remain visible separately.
+- Recurring detection separates clearly different amount streams before cadence analysis and uses calendar-month signal as a secondary monthly signal.
+- Rule matching uses an explicit safe-field whitelist; default field is `counterparty_normalized`.
+- Transaction/rule list endpoints eager-load related categories to avoid lazy-load churn.
+- Permissive CORS removed because production and Vite development are same-origin/proxied.
+- Frontend API errors parse FastAPI `detail` cleanly.
+- Frontend request hook clears stale errors, aborts stale requests, and transaction search is debounced.
+- React error boundary added.
+- Hash-backed navigation supports refresh/back/forward/deep links without another routing dependency.
+- Frontend top-level dependency versions pinned; uploader v1.4 generates and commits `package-lock.json` before publishing.
+- Obsolete split-container Dockerfiles/nginx config removed.
 
-## Validated against the supplied real CSVs
+## Validation
 
-- Apr 01–Sep 26 statement: 575 valid transactions, 7 footer rows skipped, 0 direction conflicts
-- Aug 27–Sep 26 statement: 110 valid transactions, 7 footer rows skipped, 0 direction conflicts
-- Import Apr–Sep first: 575 new
-- Preview/import Aug–Sep next: 0 new, 110 duplicates
-- Parser unit tests: 3/3 passing
-- Python compile: passing
+Backend regression suite: 8 tests passing.
 
-The real statements are NOT bundled in this project.
+Real PhonePe samples still parse exactly:
 
-## Not complete yet
+- Apr–Sep sample: 575 transactions, 7 footer rows skipped, 0 missing UTR, 0 direction conflicts.
+- Aug–Sep sample: 110 transactions, 7 footer rows skipped, 0 missing UTR, 0 direction conflicts.
 
-### Immediate next work
-1. Editable rule CRUD + rule tester/preview
-2. Transaction edit drawer/UI (category, notes, self-transfer)
-3. Counterparty aliases / merchant normalization UI
-4. Exact/probable refund-pair matching
-5. Own-account alias management + self-transfer pair matching
-6. Improve recurrence with amount-compatible sub-clustering before cadence
-7. Category/month trends and date-range filtering
-8. Data-quality/review inbox for ambiguous duplicates and rule conflicts
-9. CSV/XLSX/JSON export endpoints and report UI
-10. Alembic database migrations
+## Next product work (not bug fixes)
 
-### Later
-- Budgets
-- calendar heatmap
-- modified-z-score category/merchant anomalies
-- expected-vs-actual recurring dashboard
-- backup/restore and optional encryption
-
-## Validation caveat
-
-The frontend source is complete, but `npm install` could not finish inside the artifact environment because package registry access timed out. Backend and parser behavior were validated locally. Docker/normal development environments with registry access should install the frontend dependencies during build.
+- Rule/category CRUD and rule tester UI
+- Manual transaction edit drawer
+- Probable/fuzzy refund review UI beyond conservative exact matching
+- Own-account matching UI
+- Monthly/category trend screens and heatmap
+- Budgets/report export/backup UI
+- Audit log/data-quality review queue

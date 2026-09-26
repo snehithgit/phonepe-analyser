@@ -2,7 +2,7 @@
 
 Local-first, deterministic PhonePe CSV analyser. **No AI, no cloud APIs, no telemetry.**
 
-## Implemented in this first build
+## Implemented
 
 - PhonePe CSV header detection (metadata before the real header is fine)
 - Footer/non-transaction row rejection
@@ -11,13 +11,13 @@ Local-first, deterministic PhonePe CSV analyser. **No AI, no cloud APIs, no tele
 - Description grammar for `Paid to`, `Received from`, `Payment to`, `Transfer to`, `Refund from`, mobile recharge and roaming pack
 - Direction-consistency warning
 - Transaction-ID deduplication across overlapping statements
-- Import preview and reversible import batches
+- Import preview and genuinely reversible import batches (rolled-back rows can be restored)
 - SQLite/WAL storage
 - Payment-instrument normalization table
-- Deterministic category rules and manual-edit-ready schema
+- Deterministic category rules; unmatched credits stay Uncategorized instead of being guessed as income/receipts
 - Dashboard totals, categories, counterparties and daily spending
 - Transaction search/filtering
-- Recurring/frequent payment **and receipt** pattern detection using cadence + median/MAD amount stability
+- Recurring/frequent payment **and receipt** pattern detection using amount-stream clustering, cadence, calendar-month signal and median/MAD amount stability
 - Responsive desktop/tablet/mobile UI with mobile transaction cards and bottom navigation
 - **Single-container** Docker deployment: React is built into the FastAPI image
 
@@ -75,13 +75,12 @@ The included fixture is sanitized. Real user statements are **not** bundled into
 
 ## Current limitations / next implementation phases
 
-This is the working P0/P1 foundation, not the final feature-complete product. Next phases should add:
+This is the working P0/P1 foundation, not the final feature-complete product. Next product phases should add:
 
 1. Editable rule CRUD + rule tester/preview
 2. Manual category editing from the transaction UI
-3. Exact/probable refund pairing instead of generic refund netting
+3. Probable/fuzzy refund review beyond the conservative exact matcher
 4. Explicit own-account/self-transfer matching UI
-5. Amount-cluster-before-cadence improvements for multiple recurring streams at one merchant
-6. Monthly/category trend screens, heatmap and anomaly detection
-7. Budgets, report exports and backup/restore UI
-8. Audit log and data-quality review queue
+5. Monthly/category trend screens, heatmap and anomaly detection
+6. Budgets, report exports and backup/restore UI
+7. Audit log and data-quality review queue

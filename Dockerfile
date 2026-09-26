@@ -3,9 +3,9 @@
 # Stage 1: build the React/Vite frontend.
 FROM node:22-alpine AS frontend-build
 WORKDIR /frontend
-COPY frontend/package.json frontend/tsconfig.json frontend/vite.config.ts frontend/index.html ./
+COPY frontend/package*.json frontend/tsconfig.json frontend/vite.config.ts frontend/index.html ./
 COPY frontend/src ./src
-RUN npm install --no-audit --no-fund \
+RUN if [ -f package-lock.json ]; then npm ci --ignore-scripts --no-audit --no-fund; else npm install --ignore-scripts --no-audit --no-fund; fi \
     && npm run build
 
 # Stage 2: one lightweight runtime for both API and frontend.

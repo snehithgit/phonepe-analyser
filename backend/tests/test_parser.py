@@ -27,3 +27,12 @@ class ParserTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class MissingUtrTests(unittest.TestCase):
+    def test_valid_row_without_utr_is_kept(self):
+        raw = b'''Transaction Statement for 9000000000\nDuration,"01 Sep, 2026 - 02 Sep, 2026"\n\nDate,Time,Transaction Details,Transaction ID,UTR,Transaction Type,Credit/debit instrument,Amount\n"Sep 01, 2026","10:00 AM","Received from TEST USER","TNO-UTR-1","","CREDIT","Credited to XXXX1234","100.00"\n'''
+        result = parse_phonepe_csv(raw, "missing-utr.csv")
+        self.assertEqual(len(result.transactions), 1)
+        self.assertEqual(result.transactions[0].utr, "")
+        self.assertTrue(result.transactions[0].missing_utr)
+        self.assertEqual(result.missing_utr_rows, 1)

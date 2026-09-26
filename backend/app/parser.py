@@ -4,10 +4,9 @@ import csv
 import hashlib
 import io
 import re
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import Iterable
 
 REQUIRED_HEADERS = [
     "Date", "Time", "Transaction Details", "Transaction ID", "UTR",
@@ -24,6 +23,7 @@ DESCRIPTION_RULES = [
     (re.compile(r"^International Roaming Pack for\s+(.+)$", re.I), "ROAMING", "DEBIT"),
 ]
 
+
 @dataclass
 class ParsedTransaction:
     txn_datetime: datetime
@@ -39,6 +39,8 @@ class ParsedTransaction:
     utr: str
     instrument_raw: str
     direction_conflict: bool = False
+    missing_utr: bool = False
+
 
 @dataclass
 class ParsedStatement:
@@ -49,6 +51,7 @@ class ParsedStatement:
     transactions: list[ParsedTransaction]
     skipped_rows: int
     warnings: list[str]
+    missing_utr_rows: int = 0
 
     def to_preview(self) -> dict:
         debit = sum(t.amount_paise for t in self.transactions if t.direction == "DEBIT")
@@ -60,6 +63,7 @@ class ParsedStatement:
             "statement_end": self.statement_end,
             "transactions_found": len(self.transactions),
             "skipped_rows": self.skipped_rows,
+            "missing_utr_rows": self.missing_utr_rows,
             "warnings": self.warnings,
             "total_debit_paise": debit,
             "total_credit_paise": credit,
@@ -76,9 +80,9 @@ def normalize_counterparty(value: str | None) -> str | None:
 def parse_description(description: str, csv_direction: str) -> tuple[str, str | None, bool]:
     text = re.sub(r"\s+", " ", description).strip()
     for regex, operation, expected in DESCRIPTION_RULES:
-        m = regex.match(text)
-        if m:
-            captured = m.group(1).strip() if m.lastindex and m.group(1).strip() else None
+        match = regex.match(text)
+        if match:
+            captured = match.group(1).strip() if match.lastindex and match.group(1).strip() else None
             return operation, captured, expected != csv_direction
     return "OTHER", text or None, False
 
@@ -93,13 +97,13 @@ def rupees_to_paise(value: str) -> int:
 
 
 def _find_header(lines: list[str]) -> int:
-    for i, line in enumerate(lines):
+    for index, line in enumerate(lines):
         try:
             row = next(csv.reader([line]))
         except csv.Error:
             continue
-        if all(h in row for h in REQUIRED_HEADERS):
-            return i
+        if all(header in row for header in REQUIRED_HEADERS):
+            return index
     raise ValueError("PhonePe transaction header not found")
 
 
@@ -110,12 +114,25 @@ def _parse_duration(lines: list[str], header_index: int) -> tuple[str | None, st
             if len(row) > 1 and " - " in row[1]:
                 left, right = row[1].split(" - ", 1)
                 try:
-                    a = datetime.strptime(left.strip(), "%d %b, %Y").date().isoformat()
-                    b = datetime.strptime(right.strip(), "%d %b, %Y").date().isoformat()
-                    return a, b
+                    start = datetime.strptime(left.strip(), "%d %b, %Y").date().isoformat()
+                    end = datetime.strptime(right.strip(), "%d %b, %Y").date().isoformat()
+                    return start, end
                 except ValueError:
                     pass
     return None, None
+
+
+def _looks_like_empty_or_footer(row: dict[str, str | None]) -> bool:
+    values = [str(value or "").strip() for value in row.values()]
+    if not any(values):
+        return True
+    direction = (row.get("Transaction Type") or "").strip().upper()
+    txid = (row.get("Transaction ID") or "").strip()
+    date = (row.get("Date") or "").strip()
+    amount = (row.get("Amount") or "").strip()
+    description = (row.get("Transaction Details") or "").strip()
+    # PhonePe footer/disclaimer rows do not resemble transaction rows.
+    return direction not in {"DEBIT", "CREDIT"} and not txid and not (date and amount and description)
 
 
 def parse_phonepe_csv(data: bytes, filename: str) -> ParsedStatement:
@@ -129,14 +146,25 @@ def parse_phonepe_csv(data: bytes, filename: str) -> ParsedStatement:
     transactions: list[ParsedTransaction] = []
     skipped = 0
     warnings: list[str] = []
+    missing_utr_rows = 0
 
-    for row in reader:
+    for row_number, row in enumerate(reader, start=header_index + 2):
+        if _looks_like_empty_or_footer(row):
+            skipped += 1
+            continue
+
         direction = (row.get("Transaction Type") or "").strip().upper()
         txid = (row.get("Transaction ID") or "").strip()
         utr = (row.get("UTR") or "").strip()
-        if direction not in {"DEBIT", "CREDIT"} or not txid or not utr:
+
+        if direction not in {"DEBIT", "CREDIT"} or not txid:
             skipped += 1
+            warnings.append(
+                f"Skipped malformed transaction-like row {row_number}: "
+                f"missing valid direction or Transaction ID"
+            )
             continue
+
         try:
             dt = datetime.strptime(
                 f"{(row.get('Date') or '').strip()} {(row.get('Time') or '').strip()}",
@@ -145,29 +173,51 @@ def parse_phonepe_csv(data: bytes, filename: str) -> ParsedStatement:
             amount_paise = rupees_to_paise(row.get("Amount") or "")
         except (ValueError, TypeError) as exc:
             skipped += 1
-            warnings.append(f"Skipped malformed row for transaction {txid or '<unknown>'}: {exc}")
+            warnings.append(f"Skipped malformed row for transaction {txid}: {exc}")
             continue
 
         description = (row.get("Transaction Details") or "").strip()
         operation, counterparty, conflict = parse_description(description, direction)
         if conflict:
             warnings.append(f"Direction conflict for {txid}: description suggests opposite direction")
-        transactions.append(ParsedTransaction(
-            txn_datetime=dt,
-            date=dt.date().isoformat(),
-            time=dt.time().isoformat(timespec="minutes"),
-            direction=direction,
-            operation=operation,
-            amount_paise=amount_paise,
-            description_raw=description,
-            counterparty_raw=counterparty,
-            counterparty_normalized=normalize_counterparty(counterparty),
-            transaction_id=txid,
-            utr=utr,  # intentionally TEXT; leading zeroes preserved
-            instrument_raw=(row.get("Credit/debit instrument") or "").strip(),
-            direction_conflict=conflict,
-        ))
+        missing_utr = not bool(utr)
+        if missing_utr:
+            missing_utr_rows += 1
+
+        transactions.append(
+            ParsedTransaction(
+                txn_datetime=dt,
+                date=dt.date().isoformat(),
+                time=dt.time().isoformat(timespec="minutes"),
+                direction=direction,
+                operation=operation,
+                amount_paise=amount_paise,
+                description_raw=description,
+                counterparty_raw=counterparty,
+                counterparty_normalized=normalize_counterparty(counterparty),
+                transaction_id=txid,
+                utr=utr,  # intentionally TEXT; blank is allowed and leading zeroes are preserved
+                instrument_raw=(row.get("Credit/debit instrument") or "").strip(),
+                direction_conflict=conflict,
+                missing_utr=missing_utr,
+            )
+        )
 
     if skipped:
-        warnings.insert(0, f"Skipped {skipped} non-transaction/footer or malformed rows")
-    return ParsedStatement(filename, digest, start, end, transactions, skipped, warnings)
+        warnings.insert(0, f"Skipped {skipped} footer/empty or malformed rows")
+    if missing_utr_rows:
+        warnings.append(
+            f"Kept {missing_utr_rows} valid transaction(s) without a UTR; "
+            "Transaction ID remains the primary identifier"
+        )
+
+    return ParsedStatement(
+        filename,
+        digest,
+        start,
+        end,
+        transactions,
+        skipped,
+        warnings,
+        missing_utr_rows,
+    )

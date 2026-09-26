@@ -44,7 +44,7 @@ class Rule(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     area: Mapped[str] = mapped_column(String(32), index=True)  # DESCRIPTION / CATEGORY
     priority: Mapped[int] = mapped_column(Integer, default=100)
-    match_field: Mapped[str] = mapped_column(String(48), default="counterparty")
+    match_field: Mapped[str] = mapped_column(String(48), default="counterparty_normalized")
     match_type: Mapped[str] = mapped_column(String(24), default="CONTAINS")
     pattern: Mapped[str] = mapped_column(String(255))
     operation: Mapped[str | None] = mapped_column(String(48), nullable=True)

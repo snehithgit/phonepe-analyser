@@ -35,25 +35,111 @@ DESCRIPTION_SEEDS = [
     (70, r"^International Roaming Pack for\s+(.+)$", "ROAMING", "DEBIT"),
 ]
 
+
+def _rule_exists(db: Session, *, area: str, match_field: str, match_type: str, pattern: str) -> bool:
+    return db.scalar(
+        select(Rule.id).where(
+            Rule.area == area,
+            Rule.match_field == match_field,
+            Rule.match_type == match_type,
+            Rule.pattern == pattern,
+        ).limit(1)
+    ) is not None
+
+
 def seed_defaults(db: Session):
     existing = {c.name: c for c in db.scalars(select(Category)).all()}
     for name in CATEGORY_NAMES:
         if name not in existing:
-            c = Category(name=name)
-            db.add(c)
+            category = Category(name=name)
+            db.add(category)
             db.flush()
-            existing[name] = c
+            existing[name] = category
 
-    if not db.scalar(select(Rule.id).limit(1)):
-        for priority, pattern, operation, expected in DESCRIPTION_SEEDS:
-            db.add(Rule(area="DESCRIPTION", priority=priority, match_field="description_raw", match_type="REGEX", pattern=pattern, operation=operation, expected_direction=expected, enabled=True, builtin=True))
-        priority = 500
-        for category, patterns in CATEGORY_RULES.items():
-            for pattern in patterns:
-                db.add(Rule(area="CATEGORY", priority=priority, match_field="counterparty_normalized", match_type="CONTAINS", pattern=pattern, category_id=existing[category].id, enabled=True, builtin=True))
-                priority -= 1
-        db.add(Rule(area="CATEGORY", priority=1000, match_field="operation", match_type="EXACT", pattern="REFUND", category_id=existing["Refunds"].id, enabled=True, builtin=True))
-        db.add(Rule(area="CATEGORY", priority=990, match_field="operation", match_type="EXACT", pattern="RECHARGE", category_id=existing["Mobile & Recharge"].id, enabled=True, builtin=True))
-        db.add(Rule(area="CATEGORY", priority=989, match_field="operation", match_type="EXACT", pattern="ROAMING", category_id=existing["Mobile & Recharge"].id, enabled=True, builtin=True))
-        db.add(Rule(area="CATEGORY", priority=200, match_field="direction", match_type="EXACT", pattern="CREDIT", category_id=existing["Receipts"].id, enabled=True, builtin=True))
+    # Remove the legacy catch-all CREDIT -> Receipts seed. Incoming money remains
+    # uncategorized until a more specific deterministic or manual rule classifies it.
+    legacy_credit_rules = db.scalars(
+        select(Rule).where(
+            Rule.area == "CATEGORY",
+            Rule.builtin.is_(True),
+            Rule.match_field == "direction",
+            Rule.match_type == "EXACT",
+            Rule.pattern == "CREDIT",
+        )
+    ).all()
+    for rule in legacy_credit_rules:
+        db.delete(rule)
+
+    for priority, pattern, operation, expected in DESCRIPTION_SEEDS:
+        if not _rule_exists(
+            db,
+            area="DESCRIPTION",
+            match_field="description_raw",
+            match_type="REGEX",
+            pattern=pattern,
+        ):
+            db.add(
+                Rule(
+                    area="DESCRIPTION",
+                    priority=priority,
+                    match_field="description_raw",
+                    match_type="REGEX",
+                    pattern=pattern,
+                    operation=operation,
+                    expected_direction=expected,
+                    enabled=True,
+                    builtin=True,
+                )
+            )
+
+    priority = 500
+    for category_name, patterns in CATEGORY_RULES.items():
+        for pattern in patterns:
+            if not _rule_exists(
+                db,
+                area="CATEGORY",
+                match_field="counterparty_normalized",
+                match_type="CONTAINS",
+                pattern=pattern,
+            ):
+                db.add(
+                    Rule(
+                        area="CATEGORY",
+                        priority=priority,
+                        match_field="counterparty_normalized",
+                        match_type="CONTAINS",
+                        pattern=pattern,
+                        category_id=existing[category_name].id,
+                        enabled=True,
+                        builtin=True,
+                    )
+                )
+            priority -= 1
+
+    operation_rules = [
+        (1000, "REFUND", "Refunds"),
+        (990, "RECHARGE", "Mobile & Recharge"),
+        (989, "ROAMING", "Mobile & Recharge"),
+    ]
+    for priority, operation, category_name in operation_rules:
+        if not _rule_exists(
+            db,
+            area="CATEGORY",
+            match_field="operation",
+            match_type="EXACT",
+            pattern=operation,
+        ):
+            db.add(
+                Rule(
+                    area="CATEGORY",
+                    priority=priority,
+                    match_field="operation",
+                    match_type="EXACT",
+                    pattern=operation,
+                    category_id=existing[category_name].id,
+                    enabled=True,
+                    builtin=True,
+                )
+            )
+
     db.commit()
