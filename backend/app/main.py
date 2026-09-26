@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from .database import Base, SessionLocal, engine, get_db
 from .models import AccountInstrument, Category, ImportBatch, Rule, Transaction
+from .migrations import migrate_transaction_identity
 from .parser import ParsedTransaction, parse_phonepe_csv
 from .patterns import detect_patterns
 from .rules import apply_category_rules, get_uncategorized_id, load_category_rules
@@ -25,6 +26,7 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 app = FastAPI(title="PhonePe Analyser", version=APP_VERSION)
 
+migrate_transaction_identity(engine)
 Base.metadata.create_all(engine)
 with SessionLocal() as _db:
     seed_defaults(_db)
@@ -117,6 +119,24 @@ def _instrument_cache(db: Session, parsed: list[ParsedTransaction]) -> dict[str,
     return cache
 
 
+def _parsed_identity(tx: ParsedTransaction) -> tuple[str, str, int, str]:
+    return (
+        tx.transaction_id,
+        tx.direction,
+        tx.amount_paise,
+        tx.utr,
+    )
+
+
+def _stored_identity(tx: Transaction) -> tuple[str, str, int, str]:
+    return (
+        tx.transaction_id,
+        tx.direction,
+        tx.amount_paise,
+        tx.utr,
+    )
+
+
 def _copy_parsed_fields(
     tx: Transaction,
     parsed: ParsedTransaction,
@@ -158,22 +178,34 @@ async def preview_import(file: UploadFile = File(...), db: Session = Depends(get
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    txids = [tx.transaction_id for tx in parsed.transactions]
-    rows = db.execute(
-        select(Transaction.transaction_id, Transaction.is_deleted).where(
+    txids = sorted({tx.transaction_id for tx in parsed.transactions})
+    existing = db.scalars(
+        select(Transaction).where(
             Transaction.provider == "PHONEPE",
             Transaction.transaction_id.in_(txids),
         )
     ).all() if txids else []
-    active = {txid for txid, is_deleted in rows if not is_deleted}
-    restorable = {txid for txid, is_deleted in rows if is_deleted}
+
+    parsed_keys = {_parsed_identity(tx) for tx in parsed.transactions}
+    active_keys = {
+        _stored_identity(tx)
+        for tx in existing
+        if not tx.is_deleted
+    }
+    restorable_keys = {
+        _stored_identity(tx)
+        for tx in existing
+        if tx.is_deleted
+    }
+    file_duplicate_rows = len(parsed.transactions) - len(parsed_keys)
 
     result = parsed.to_preview()
     result.update(
         {
-            "new_transactions": len(txids) - len(active) - len(restorable),
-            "restorable_transactions": len(restorable),
-            "already_imported": len(active),
+            "new_transactions": len(parsed_keys - active_keys - restorable_keys),
+            "restorable_transactions": len(parsed_keys & restorable_keys),
+            "already_imported": len(parsed_keys & active_keys),
+            "duplicate_rows_in_file": file_duplicate_rows,
             "possible_duplicates": 0,
             "sample": [
                 {
@@ -212,14 +244,14 @@ async def commit_import(file: UploadFile = File(...), db: Session = Depends(get_
     db.add(batch)
     db.flush()
 
-    txids = [item.transaction_id for item in parsed.transactions]
+    txids = sorted({item.transaction_id for item in parsed.transactions})
     existing = db.scalars(
         select(Transaction).where(
             Transaction.provider == "PHONEPE",
             Transaction.transaction_id.in_(txids),
         )
     ).all() if txids else []
-    existing_by_txid = {tx.transaction_id: tx for tx in existing}
+    existing_by_identity = {_stored_identity(tx): tx for tx in existing}
 
     instruments = _instrument_cache(db, parsed.transactions)
     category_rules = load_category_rules(db)
@@ -231,7 +263,8 @@ async def commit_import(file: UploadFile = File(...), db: Session = Depends(get_
 
     for item in parsed.transactions:
         instrument = instruments.get(item.instrument_raw)
-        existing_tx = existing_by_txid.get(item.transaction_id)
+        identity = _parsed_identity(item)
+        existing_tx = existing_by_identity.get(identity)
 
         if existing_tx is not None and not existing_tx.is_deleted:
             duplicate_count += 1
@@ -247,6 +280,7 @@ async def commit_import(file: UploadFile = File(...), db: Session = Depends(get_
             if existing_tx.category_source != "MANUAL":
                 apply_category_rules(existing_tx, category_rules, uncategorized_id)
             restored_count += 1
+            existing_by_identity[identity] = existing_tx
             continue
 
         tx = Transaction(
@@ -265,6 +299,7 @@ async def commit_import(file: UploadFile = File(...), db: Session = Depends(get_
         )
         db.add(tx)
         apply_category_rules(tx, category_rules, uncategorized_id)
+        existing_by_identity[identity] = tx
         created_count += 1
 
     batch.new_rows = created_count + restored_count
