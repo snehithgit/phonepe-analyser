@@ -329,21 +329,19 @@ def merge_counterparty_profile(
 
     # Preserve the target profile identity. Move every alias and linked loan
     # from the duplicate source profile into it.
-    source_aliases = list(
-        db.scalars(
-            select(CounterpartyAlias).where(
-                CounterpartyAlias.profile_id == source.id
-            )
-        ).all()
-    )
+    # Reassign through ORM relationships, not only FK values. Because aliases
+    # use delete-orphan cascade, changing just profile_id can leave the loaded
+    # source.aliases collection stale and cause the moved alias to be deleted
+    # when the duplicate source profile is removed.
+    source_aliases = list(source.aliases)
     for source_alias in source_aliases:
-        source_alias.profile_id = target.id
+        source_alias.profile = target
 
     source_loans = list(
         db.scalars(select(Loan).where(Loan.profile_id == source.id)).all()
     )
     for loan in source_loans:
-        loan.profile_id = target.id
+        loan.profile = target
 
     if target.relationship_type == "GENERAL" and source.relationship_type != "GENERAL":
         target.relationship_type = source.relationship_type
@@ -351,14 +349,13 @@ def merge_counterparty_profile(
         target.notes = source.notes
 
     db.delete(source)
-    db.flush()
+    db.commit()
 
     merged = db.scalar(
         select(CounterpartyProfile)
         .options(selectinload(CounterpartyProfile.aliases))
         .where(CounterpartyProfile.id == target.id)
     )
-    db.commit()
     return {
         "ok": True,
         "merged": True,
