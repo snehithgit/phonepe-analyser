@@ -56,6 +56,76 @@ class Rule(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     category: Mapped[Category | None] = relationship()
 
+
+class CounterpartyProfile(Base):
+    __tablename__ = "counterparty_profiles"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(255))
+    relationship_type: Mapped[str] = mapped_column(String(32), default="GENERAL", index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    aliases: Mapped[list["CounterpartyAlias"]] = relationship(
+        back_populates="profile",
+        cascade="all, delete-orphan",
+    )
+    loans: Mapped[list["Loan"]] = relationship(back_populates="profile")
+
+
+class CounterpartyAlias(Base):
+    __tablename__ = "counterparty_aliases"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("counterparty_profiles.id"), index=True)
+    normalized_name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    profile: Mapped[CounterpartyProfile] = relationship(back_populates="aliases")
+
+
+class Loan(Base):
+    __tablename__ = "loans"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("counterparty_profiles.id"), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    loan_type: Mapped[str] = mapped_column(String(64), default="HOME_LOAN")
+    account_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    original_principal_paise: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    annual_interest_bps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    emi_paise: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    start_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    term_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    profile: Mapped[CounterpartyProfile] = relationship(back_populates="loans")
+    payments: Mapped[list["LoanPayment"]] = relationship(
+        back_populates="loan",
+        cascade="all, delete-orphan",
+    )
+
+
+class LoanPayment(Base):
+    __tablename__ = "loan_payments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    loan_id: Mapped[int] = mapped_column(ForeignKey("loans.id"), index=True)
+    transaction_id: Mapped[int] = mapped_column(
+        ForeignKey("transactions.id"),
+        unique=True,
+        index=True,
+    )
+    principal_paise: Mapped[int] = mapped_column(Integer, default=0)
+    interest_paise: Mapped[int] = mapped_column(Integer, default=0)
+    fees_paise: Mapped[int] = mapped_column(Integer, default=0)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    loan: Mapped[Loan] = relationship(back_populates="payments")
+    transaction: Mapped["Transaction"] = relationship()
+
 class Transaction(Base):
     __tablename__ = "transactions"
     __table_args__ = (

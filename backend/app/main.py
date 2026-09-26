@@ -19,12 +19,14 @@ from .migrations import migrate_transaction_identity
 from .parser import ParsedTransaction, parse_phonepe_csv
 from .patterns import detect_patterns
 from .rules import apply_category_rules, get_uncategorized_id, load_category_rules
+from .relationships import router as relationships_router
 from .seed import seed_defaults
 
-APP_VERSION = "0.1.2"
+APP_VERSION = "0.2.0"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 app = FastAPI(title="PhonePe Analyser", version=APP_VERSION)
+app.include_router(relationships_router)
 
 migrate_transaction_identity(engine)
 Base.metadata.create_all(engine)

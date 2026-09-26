@@ -8,7 +8,7 @@ CATEGORY_NAMES = [
     "Food & Dining", "Groceries", "Medical & Hospital", "Entertainment", "Travel",
     "Transport", "Shopping", "Bills & Utilities", "Mobile & Recharge", "Education",
     "Home & Household", "Personal Care", "Insurance", "EMI / Loan", "Rent",
-    "Subscriptions", "Family / Personal Transfers", "Business", "Refunds",
+    "Subscriptions", "Family / Personal Transfers", "Personal Lending / Interest", "Business", "Refunds",
     "Receipts", "Uncategorized",
 ]
 
