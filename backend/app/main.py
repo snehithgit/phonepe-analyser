@@ -538,6 +538,58 @@ def merchant_analytics(db: Session = Depends(get_db)):
     return sorted(rows, key=lambda row: row["total"], reverse=True)[:100]
 
 
+@app.get("/api/analytics/monthly")
+def monthly_analytics(db: Session = Depends(get_db)):
+    """Month x category debit totals plus monthly income, for the trend chart."""
+    effective, _ = _effective_transactions(db)
+    spend_by_month: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    income_by_month: dict[str, int] = defaultdict(int)
+    for tx in effective:
+        month = tx.txn_datetime.strftime("%Y-%m")
+        if tx.direction == "DEBIT":
+            name = tx.category.name if tx.category else "Uncategorized"
+            spend_by_month[month][name] += tx.amount_paise
+        else:
+            income_by_month[month] += tx.amount_paise
+    all_months = sorted(set(spend_by_month) | set(income_by_month))
+    return {
+        "months": [
+            {
+                "month": month,
+                "categories": {
+                    name: money(paise) for name, paise in spend_by_month.get(month, {}).items()
+                },
+                "income": money(income_by_month.get(month, 0)),
+            }
+            for month in all_months
+        ]
+    }
+
+
+@app.post("/api/rules/reapply")
+def reapply_rules(db: Session = Depends(get_db)):
+    """Re-run current category rules against every non-manually-categorized,
+    active transaction. Lets rule/pattern edits sweep the existing backlog
+    instead of only affecting future imports.
+    """
+    transactions = db.scalars(
+        select(Transaction).where(
+            Transaction.is_deleted.is_(False),
+            Transaction.category_source != "MANUAL",
+        )
+    ).all()
+    category_rules = load_category_rules(db)
+    uncategorized_id = get_uncategorized_id(db)
+    changed = 0
+    for tx in transactions:
+        before = (tx.category_id, tx.category_rule_id)
+        apply_category_rules(tx, category_rules, uncategorized_id)
+        if (tx.category_id, tx.category_rule_id) != before:
+            changed += 1
+    db.commit()
+    return {"checked": len(transactions), "recategorized": changed}
+
+
 @app.get("/api/patterns")
 def patterns(db: Session = Depends(get_db)):
     return detect_patterns(db)

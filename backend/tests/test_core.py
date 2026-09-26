@@ -17,6 +17,8 @@ from app.models import (
     Transaction,
 )
 from app.patterns import detect_patterns
+from app.rules import load_category_rules
+from app.seed import seed_defaults
 
 FIXTURE = Path(__file__).parent / "fixtures" / "phonepe_sample.csv"
 
@@ -273,6 +275,122 @@ Date,Time,Transaction Details,Transaction ID,UTR,Transaction Type,Credit/debit i
         detail = self.client.get(f"/api/loans/{loan_id}").json()
         self.assertEqual(detail["interest_paid"], 12000.0)
         self.assertEqual(detail["principal_paid"], 28000.0)
+
+class MonthlyAnalyticsAndReapplyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(app)
+
+    def setUp(self):
+        from app.models import ImportBatch
+        with SessionLocal() as db:
+            db.query(LoanPayment).delete()
+            db.query(Loan).delete()
+            db.query(CounterpartyAlias).delete()
+            db.query(CounterpartyProfile).delete()
+            db.query(Transaction).delete()
+            db.query(ImportBatch).delete()
+            db.commit()
+
+    def _import_csv(self, raw: bytes):
+        return self.client.post(
+            "/api/imports/commit",
+            files={"file": ("analytics.csv", raw, "text/csv")},
+        )
+
+    def test_monthly_analytics_groups_debits_by_category_and_sums_income(self):
+        raw = b'''Transaction Statement for 9000000000
+Duration,01 Jul 2026 - 31 Aug 2026
+
+Date,Time,Transaction Details,Transaction ID,UTR,Transaction Type,Credit/debit instrument,Amount
+"Jul 05, 2026","10:00 AM","Bill paid - Electricity Board","TA1","111","DEBIT","XXXX1234","1200.00"
+"Jul 10, 2026","10:00 AM","Paid - Mobile Recharge","TA2","222","DEBIT","XXXX1234","299.00"
+"Aug 01, 2026","09:00 AM","Received from EMPLOYER","TA3","333","CREDIT","XXXX1234","50000.00"
+'''
+        self.assertEqual(self._import_csv(raw).status_code, 200)
+
+        resp = self.client.get("/api/analytics/monthly")
+        self.assertEqual(resp.status_code, 200)
+        months = {m["month"]: m for m in resp.json()["months"]}
+        self.assertIn("2026-07", months)
+        self.assertIn("2026-08", months)
+        # Both debits are auto-categorized by the builtin rules (not left
+        # Uncategorized), each landing in its own month's category bucket.
+        self.assertAlmostEqual(sum(months["2026-07"]["categories"].values()), 1499.00, places=2)
+        self.assertEqual(months["2026-07"]["income"], 0)
+        self.assertEqual(months["2026-08"]["income"], 50000.00)
+        self.assertEqual(months["2026-08"]["categories"], {})
+
+    def test_reapply_rules_recategorizes_backlog_but_skips_manual(self):
+        raw = b'''Transaction Statement for 9000000000
+Duration,01 Jul 2026 - 31 Aug 2026
+
+Date,Time,Transaction Details,Transaction ID,UTR,Transaction Type,Credit/debit instrument,Amount
+"Jul 05, 2026","10:00 AM","Bill paid - Electricity Board","TB1","111","DEBIT","XXXX1234","1200.00"
+"Jul 06, 2026","10:00 AM","Paid - Mobile Recharge","TB2","222","DEBIT","XXXX1234","299.00"
+'''
+        self.assertEqual(self._import_csv(raw).status_code, 200)
+
+        with SessionLocal() as db:
+            rows = db.query(Transaction).order_by(Transaction.transaction_id).all()
+            self.assertEqual(len(rows), 2)
+            first_id, second_id = rows[0].id, rows[1].id
+            # Force both into an uncategorized/rule-stale state, and hand-mark
+            # one as MANUAL so reapply must leave it untouched.
+            for row in rows:
+                row.category_id = None
+                row.category_rule_id = None
+                row.category_source = "RULE"
+            rows[0].category_source = "MANUAL"
+            db.commit()
+
+        resp = self.client.post("/api/rules/reapply")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["checked"], 1)  # only the non-MANUAL row is eligible
+        self.assertEqual(body["recategorized"], 1)
+
+        with SessionLocal() as db:
+            manual_tx = db.get(Transaction, first_id)
+            reapplied_tx = db.get(Transaction, second_id)
+            self.assertIsNone(manual_tx.category_id)
+            self.assertEqual(manual_tx.category_source, "MANUAL")
+            self.assertIsNotNone(reapplied_tx.category_id)
+            self.assertEqual(reapplied_tx.category_source, "RULE")
+
+
+class SeedRuleSpecificityTests(unittest.TestCase):
+    """seed.py orders builtin CATEGORY rules longest-pattern-first so a broad
+    keyword (e.g. "SWIGGY") never shadows a more specific one that contains it
+    (e.g. "SWIGGY INSTAMART") regardless of dict insertion order."""
+
+    def test_more_specific_pattern_outranks_shorter_substring(self):
+        with SessionLocal() as db:
+            rules = load_category_rules(db)
+            by_pattern = {r.pattern: r for r in rules if r.builtin}
+            specific = [p for p in by_pattern if "SWIGGY" in p.upper() and p.upper() != "SWIGGY"]
+            self.assertTrue(specific, "expected a longer SWIGGY-containing builtin pattern")
+            for pattern in specific:
+                if "SWIGGY" in by_pattern:
+                    self.assertGreater(
+                        by_pattern[pattern].priority,
+                        by_pattern["SWIGGY"].priority,
+                        f"{pattern!r} must outrank the shorter 'SWIGGY' pattern",
+                    )
+
+    def test_seeding_is_idempotent_on_rerun(self):
+        # seed_defaults runs again against an already-seeded database (this is
+        # what happens on every app restart) and must not create duplicate
+        # builtin rows or regress a previously-fixed priority.
+        with SessionLocal() as db:
+            before = {r.id: (r.pattern, r.priority) for r in load_category_rules(db) if r.builtin}
+            seed_defaults(db)
+            db.commit()
+            after = {r.id: (r.pattern, r.priority) for r in load_category_rules(db) if r.builtin}
+            self.assertEqual(before, after)
+            patterns = [p for p, _ in after.values()]
+            self.assertEqual(len(patterns), len(set(patterns)), "seeding must not duplicate builtin rules")
+
 
 if __name__ == "__main__":
     unittest.main()
