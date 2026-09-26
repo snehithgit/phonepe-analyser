@@ -56,3 +56,34 @@ class MissingUtrTests(unittest.TestCase):
         self.assertEqual(result.transactions[0].utr, "")
         self.assertTrue(result.transactions[0].missing_utr)
         self.assertEqual(result.missing_utr_rows, 1)
+
+
+class DescriptionGrammarTests(unittest.TestCase):
+    """Covers the recharge/bill-payment description patterns added to
+    DESCRIPTION_RULES, which previously fell through to operation=OTHER."""
+
+    def test_mobile_recharge_dash_variant(self):
+        op, who, conflict = parse_description("Paid - Mobile Recharge", "DEBIT")
+        self.assertEqual(op, "RECHARGE")
+        self.assertIsNone(who)
+        self.assertFalse(conflict)
+
+    def test_bill_paid_with_biller_name(self):
+        op, who, conflict = parse_description("Bill paid - Electricity Board", "DEBIT")
+        self.assertEqual(op, "BILL_PAYMENT")
+        self.assertEqual(who, "Electricity Board")
+        self.assertFalse(conflict)
+
+    def test_bill_paid_no_biller_name(self):
+        op, who, conflict = parse_description("Bill paid", "DEBIT")
+        self.assertEqual(op, "BILL_PAYMENT")
+        self.assertIsNone(who)
+        self.assertFalse(conflict)
+
+    def test_existing_patterns_still_take_priority(self):
+        # Guards against the new rules being inserted in a way that shadows
+        # earlier, more specific matches like "Paid to X".
+        op, who, conflict = parse_description("Paid to IRCTC", "DEBIT")
+        self.assertEqual(op, "PAYMENT")
+        self.assertEqual(who, "IRCTC")
+        self.assertFalse(conflict)

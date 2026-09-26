@@ -21,6 +21,9 @@ DESCRIPTION_RULES = [
     (re.compile(r"^Transfer to\s+(.+)$", re.I), "TRANSFER", "DEBIT"),
     (re.compile(r"^Mobile recharged\s*(.*)$", re.I), "RECHARGE", "DEBIT"),
     (re.compile(r"^International Roaming Pack for\s+(.+)$", re.I), "ROAMING", "DEBIT"),
+    (re.compile(r"^Paid - Mobile Recharge$", re.I), "RECHARGE", "DEBIT"),
+    (re.compile(r"^Bill paid - (.+)$", re.I), "BILL_PAYMENT", "DEBIT"),
+    (re.compile(r"^Bill paid$", re.I), "BILL_PAYMENT", "DEBIT"),
 ]
 
 
